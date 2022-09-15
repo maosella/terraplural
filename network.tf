@@ -14,54 +14,22 @@ data "aws_availability_zones" "available" {
 ##################################################################################
 
 # NETWORKING #
-resource "aws_vpc" "vpc" {
-  cidr_block           = var.vpc_cidr_block
-  enable_dns_hostnames = var.enable_dns_hostnames
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "=3.10.0"
 
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-vpc"
-  })
-}
+  cidr = var.vpc_cidr_block
 
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.vpc.id
+  azs            = slice(data.aws_availability_zones.available.names, 0, (var.vpc_subnet_count))
+  public_subnets = [for subnet in range(var.vpc_subnet_count) : cidrsubnet(var.vpc_cidr_block, 8, subnet)]
 
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-igw"
-  })
-}
-resource "aws_subnet" "subnets" {
-  count                   = var.vpc_subnet_count
-  cidr_block              = cidrsubnet(var.vpc_cidr_block, 8, count.index)
-  vpc_id                  = aws_vpc.vpc.id
-  map_public_ip_on_launch = var.map_public_ip_on_launch
-  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  enable_nat_gateway = false
+  enable_vpn_gateway = false
 
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-subnet-${count.index}"
-  })
-}
-
-
-
-# ROUTING #
-resource "aws_route_table" "rtb" {
-  vpc_id = aws_vpc.vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
+  tags = {
+    Terraform   = "true"
+    Environment = "dev"
   }
-
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-rtb"
-  })
-}
-
-resource "aws_route_table_association" "rta-subnets" {
-  count          = var.vpc_subnet_count
-  subnet_id      = aws_subnet.subnets[count.index].id
-  route_table_id = aws_route_table.rtb.id
 }
 
 
@@ -69,7 +37,7 @@ resource "aws_route_table_association" "rta-subnets" {
 # Nginx security group 
 resource "aws_security_group" "nginx-sg" {
   name   = "${local.name_prefix}-nginx_sg"
-  vpc_id = aws_vpc.vpc.id
+  vpc_id = module.vpc.vpc_id
 
   # HTTP access from anywhere
   ingress {
@@ -92,7 +60,7 @@ resource "aws_security_group" "nginx-sg" {
 
 resource "aws_security_group" "alb-sg" {
   name   = "${local.name_prefix}-nginx_alb_sg"
-  vpc_id = aws_vpc.vpc.id
+  vpc_id = module.vpc.vpc_id
 
   # HTTP access from anywhere
   ingress {
